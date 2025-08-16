@@ -183,9 +183,12 @@ def proxy():
         else:
             return 'Unsupported method', 405
         
+        # Calculate full proxy path
+        proxy_path = request.host_url.rstrip('/') + '/proxy'
+        
         if 300 <= response.status_code < 400 and 'location' in response.headers:
             location = urljoin(target_url, response.headers['location'])
-            redirected_url = f'/proxy?url={quote_plus(location)}'
+            redirected_url = f'{proxy_path}?url={quote_plus(location)}'
             resp = Response('', status=response.status_code)
             resp.headers['Location'] = redirected_url
             for header, value in response.headers.items():
@@ -196,7 +199,7 @@ def proxy():
         
         content_type = response.headers.get('Content-Type', '')
         if 'text/html' in content_type:
-            rewritten_content = rewrite_html(response.text, target_url, '/proxy')
+            rewritten_content = rewrite_html(response.text, target_url, proxy_path)
             resp = Response(rewritten_content, status=response.status_code)
         else:
             resp = Response(response.content, status=response.status_code)
