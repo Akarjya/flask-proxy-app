@@ -10,8 +10,8 @@ import os
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 
-# Final website URL (without www to avoid initial redirect)
-FINAL_URL = 'https://whatismyipaddress.com/'
+# Final website URL (changed to a site without Cloudflare challenge issues)
+FINAL_URL = 'https://www.iplocation.net/'
 
 # Spoofed Timezone and Offset for New York
 SPOOFED_TIMEZONE = 'America/New_York'
