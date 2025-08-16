@@ -41,17 +41,17 @@ TIMEZONE_SPOOF_JS = """
       const originalResolvedOptions = dtf.resolvedOptions;
       dtf.resolvedOptions = function() {
         const options = originalResolvedOptions.call(dtf);
-        options.timeZone = '{SPOOFED_TIMEZONE}';
+        options.timeZone = '{0}';
         return options;
       };
       return dtf;
     };
     Date.prototype.getTimezoneOffset = function() {
-      return {SPOOFED_OFFSET};
+      return {1};
     };
   })();
 </script>
-""".format(SPOOFED_TIMEZONE=SPOOFED_TIMEZONE, SPOOFED_OFFSET=SPOOFED_OFFSET)
+""".format(SPOOFED_TIMEZONE, SPOOFED_OFFSET)
 
 PROXY_JS_OVERRIDE = """
 <script>
@@ -139,14 +139,14 @@ def rewrite_html(content, base_url, proxy_path):
             absolute_fetch_url = proxy_path + '?url=' + quote_plus('https://ipapi.co/json/')
             script.string = script.string.replace("fetch('https://ipapi.co/json/')", f"fetch('{absolute_fetch_url}')")
     
-    # Inject timezone and proxy JS override using new_tag to avoid parsing issues
+    # Inject timezone and proxy JS override using new_tag
     if soup.head:
         timezone_script = soup.new_tag('script')
-        timezone_script.string = TIMEZONE_SPOOF_JS.strip()
+        timezone_script.string = TIMEZONE_SPOOF_JS
         soup.head.insert(0, timezone_script)
         
         proxy_script = soup.new_tag('script')
-        proxy_script.string = PROXY_JS_OVERRIDE.strip()
+        proxy_script.string = PROXY_JS_OVERRIDE
         soup.head.insert(1, proxy_script)
     
     return str(soup)
