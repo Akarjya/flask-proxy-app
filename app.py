@@ -13,7 +13,7 @@ app.secret_key = 'super_secret_key_for_testing'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 
 # Final website URL
-FINAL_URL = 'https://www.iplocation.net/'
+FINAL_URL = 'https://ybsq.xyz/'
 
 # Spoofed Timezone and Offset for New York
 SPOOFED_TIMEZONE = 'America/New_York'
