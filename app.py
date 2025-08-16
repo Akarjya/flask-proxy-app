@@ -34,80 +34,81 @@ def generate_random_session():
 
 TIMEZONE_SPOOF_JS = """
 <script>
-  (function() {
+  (function() {{
     const originalDateTimeFormat = Intl.DateTimeFormat;
-    Intl.DateTimeFormat = function(...args) {
+    Intl.DateTimeFormat = function(...args) {{
       const dtf = new originalDateTimeFormat(...args);
       const originalResolvedOptions = dtf.resolvedOptions;
-      dtf.resolvedOptions = function() {
+      dtf.resolvedOptions = function() {{
         const options = originalResolvedOptions.call(dtf);
         options.timeZone = '{0}';
         return options;
-      };
+      }};
       return dtf;
-    };
-    Date.prototype.getTimezoneOffset = function() {
+    }};
+    Date.prototype.getTimezoneOffset = function() {{
       return {1};
-    };
-  })();
+    }};
+  }})();
 </script>
 """.format(SPOOFED_TIMEZONE, SPOOFED_OFFSET)
 
+# Escaped JS for format
 PROXY_JS_OVERRIDE = """
 <script>
   console.log('Proxy JS override loaded');
-  (function() {
+  (function() {{
     const proxyBase = window.location.origin + '/proxy?url=';
     const originalFetch = window.fetch;
-    window.fetch = function(url, options) {
+    window.fetch = function(url, options) {{
       console.log('Intercepted fetch to:', url);
-      if (typeof url === 'string') {
+      if (typeof url === 'string') {{
         url = proxyBase + encodeURIComponent(url);
-      } else if (url instanceof Request) {
+      }} else if (url instanceof Request) {{
         url = new Request(proxyBase + encodeURIComponent(url.url), url);
-      }
+      }}
       return originalFetch.call(this, url, options);
-    };
+    }};
     const originalXHR = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(method, url) {
+    XMLHttpRequest.prototype.open = function(method, url) {{
       console.log('Intercepted XHR to:', url);
       url = proxyBase + encodeURIComponent(url);
       return originalXHR.call(this, method, url);
-    };
+    }};
     const originalSendBeacon = navigator.sendBeacon;
-    navigator.sendBeacon = function(url, data) {
+    navigator.sendBeacon = function(url, data) {{
       console.log('Intercepted sendBeacon to:', url);
       url = proxyBase + encodeURIComponent(url);
       return originalSendBeacon.call(navigator, url, data);
-    };
-    Object.defineProperty(window.location, 'href', {
-      set: function(value) {
-        if (value !== window.location.href) {
+    }};
+    Object.defineProperty(window.location, 'href', {{
+      set: function(value) {{
+        if (value !== window.location.href) {{
           value = proxyBase + encodeURIComponent(value);
           this._value = value;
-        }
-      },
-      get: function() {
+        }}
+      }},
+      get: function() {{
         return this._value || window.location.href;
-      }
-    });
-    window.location.replace = function(url) {
+      }}
+    }});
+    window.location.replace = function(url) {{
       url = proxyBase + encodeURIComponent(url);
       this.href = url;
-    };
-    window.location.assign = function(url) {
+    }};
+    window.location.assign = function(url) {{
       url = proxyBase + encodeURIComponent(url);
       this.href = url;
-    };
-    window.location.reload = function() {
+    }};
+    window.location.reload = function() {{
       console.log('Reload blocked by proxy');
       return;
-    };
-    document.addEventListener('DOMContentLoaded', function() {
+    }};
+    document.addEventListener('DOMContentLoaded', function() {{
       const metas = document.querySelectorAll('meta[http-equiv="refresh"]');
       metas.forEach(meta => meta.remove());
-    });
-  })();
+    }});
+  }})();
 </script>
 """
 
