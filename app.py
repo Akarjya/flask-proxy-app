@@ -10,7 +10,7 @@ import os
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 
-# Final website URL (changed to https://www.whatismyip.com/ as requested)
+# Final website URL
 FINAL_URL = 'https://www.whatismyip.com/'
 
 # Spoofed Timezone and Offset for New York
@@ -84,6 +84,22 @@ PROXY_JS_OVERRIDE = """
       }}
     }});
 
+    window.location.replace = function(url) {{
+      url = '/proxy?url=' + encodeURIComponent(url);
+      this.href = url;
+    }};
+
+    window.location.assign = function(url) {{
+      url = '/proxy?url=' + encodeURIComponent(url);
+      this.href = url;
+    }};
+
+    window.location.reload = function() {{
+      // Block reload to prevent refresh
+      console.log('Reload blocked by proxy');
+      return;
+    }};
+
     document.addEventListener('DOMContentLoaded', function() {{
       const metas = document.querySelectorAll('meta[http-equiv="refresh"]');
       metas.forEach(meta => meta.remove());
@@ -106,7 +122,7 @@ def rewrite_html(content, base_url, proxy_path):
         base_tag = soup.new_tag('base', href=base_url)
         soup.head.insert(0, base_tag)
     
-    # Rewrite all links (expanded attrs)
+    # Rewrite all possible links (expanded)
     for tag in soup.find_all(['a', 'img', 'script', 'link', 'form', 'iframe', 'video', 'source', 'audio', 'embed'], attrs={'href': True, 'src': True, 'action': True, 'poster': True, 'data-src': True, 'data-lazy-src': True, 'data-url': True}):
         for attr in ['href', 'src', 'action', 'poster', 'data-src', 'data-lazy-src', 'data-url']:
             if tag.has_attr(attr):
@@ -115,7 +131,7 @@ def rewrite_html(content, base_url, proxy_path):
                     full_url = urljoin(base_url, original_url)
                     tag[attr] = f'{proxy_path}?url={quote_plus(full_url)}'
     
-    # Inject timezone and proxy JS
+    # Inject timezone and proxy JS override
     if soup.head:
         soup.head.insert(0, BeautifulSoup(TIMEZONE_SPOOF_JS + PROXY_JS_OVERRIDE, 'html.parser'))
     
@@ -130,7 +146,7 @@ def proxy():
     
     session['last_activity'] = time.time()
 
-    if 'proxy_session_random' not in session:
+    if 'proxy_session_random' in session:
         session['proxy_session_random'] = generate_random_session()
     
     random_session = session['proxy_session_random']
