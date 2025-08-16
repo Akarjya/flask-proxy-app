@@ -6,3 +6,4 @@ gunicorn
 pysocks
 cloudscraper
 flask_caching
+flask_compress
