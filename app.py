@@ -12,8 +12,8 @@ app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 
-# Final website URL (changed to simple IP checker for fast testing; change to your site later)
-FINAL_URL = 'https://httpbin.org/ip'
+# Final website URL (changed to site that shows IP + location details)
+FINAL_URL = 'https://iplocation.com/'
 
 # Spoofed Timezone and Offset for New York
 SPOOFED_TIMEZONE = 'America/New_York'
