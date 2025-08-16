@@ -10,8 +10,8 @@ import os
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 
-# Final website URL (changed to https://www.whatismyip.com/ as requested)
-FINAL_URL = 'https://www.whatismyip.com/'
+# Final website URL (changed to a more reliable IP checker that loads properly)
+FINAL_URL = 'https://www.whatismyipaddress.com/'
 
 # Spoofed Timezone and Offset for New York
 SPOOFED_TIMEZONE = 'America/New_York'
@@ -149,9 +149,11 @@ def proxy():
     }
     
     target_url = request.args.get('url')
+    is_initial = False
     if not target_url:
         if request.method == 'POST':
             target_url = FINAL_URL
+            is_initial = True
         else:
             return 'No URL provided', 400
     
@@ -163,7 +165,7 @@ def proxy():
     }
     
     try:
-        if request.method == 'GET':
+        if is_initial or request.method == 'GET':
             response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30, allow_redirects=False)
         elif request.method == 'POST':
             response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=30, allow_redirects=False)
