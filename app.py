@@ -1,4 +1,5 @@
 from flask import Flask, request, Response, session, make_response
+from flask_compress import Compress
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote_plus
@@ -7,12 +8,18 @@ import string
 import time
 import os
 from datetime import timedelta
+import base64
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
+Compress(app)
 
-# Final website URL (changed to site that shows IP + location details)
+# Cache dict for resources (global, not per session)
+resource_cache = {}
+
+# Final website URL (iplocation.com for IP+location)
 FINAL_URL = 'https://iplocation.com/'
 
 # Spoofed Timezone and Offset for New York
@@ -103,7 +110,17 @@ PROXY_JS_OVERRIDE = """
 
 SESSION_TIMEOUT = 50
 
-def rewrite_html(content, base_url, proxy_path):
+def fetch_resource(url, proxies, headers):
+    try:
+        with requests.Session() as s:
+            resp = s.get(url, proxies=proxies, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                return resp.content, resp.headers.get('Content-Type')
+    except:
+        pass
+    return None, None
+
+def rewrite_html(content, base_url, proxy_path, proxies, headers):
     soup = BeautifulSoup(content, 'lxml')
     
     # Remove meta refresh tags to prevent auto-redirect
@@ -115,7 +132,8 @@ def rewrite_html(content, base_url, proxy_path):
         base_tag = soup.new_tag('base', href=base_url)
         soup.head.insert(0, base_tag)
     
-    # Rewrite all possible links (fixed to match tags with ANY of the attrs)
+    # Collect all resource URLs for potential inlining
+    resources = []
     attrs_list = ['href', 'src', 'action', 'poster', 'data-src', 'data-lazy-src', 'data-url']
     tags_list = ['a', 'img', 'script', 'link', 'form', 'iframe', 'video', 'source', 'audio', 'embed']
     for tag in soup.find_all(lambda tag: tag.name in tags_list and any(tag.has_attr(attr) for attr in attrs_list)):
@@ -124,7 +142,23 @@ def rewrite_html(content, base_url, proxy_path):
                 original_url = tag[attr]
                 if original_url:
                     full_url = urljoin(base_url, original_url)
+                    resources.append(full_url)
                     tag[attr] = f'{proxy_path}?url={quote_plus(full_url)}'
+    
+    # Parallel fetch small resources for inlining
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(fetch_resource, url, proxies, headers) for url in resources]
+        for future, tag in zip(futures, soup.find_all()):
+            content, ctype = future.result()
+            if content and len(content) < 10240:  # Inline if <10KB
+                if 'image' in ctype:
+                    tag['src'] = f'data:{ctype};base64,' + base64.b64encode(content).decode()
+                elif 'css' in ctype and tag.name == 'link':
+                    style_tag = soup.new_tag('style')
+                    style_tag.string = content.decode()
+                    tag.replace_with(style_tag)
+                elif 'javascript' in ctype and tag.name == 'script':
+                    tag.string = content.decode()
     
     # Inject timezone and proxy JS override
     if soup.head:
@@ -178,12 +212,13 @@ def proxy():
     }
     
     try:
-        if is_initial or request.method in ('GET', 'HEAD'):
-            response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30, allow_redirects=False)
-        elif request.method == 'POST':
-            response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=30, allow_redirects=False)
-        else:
-            return 'Unsupported method', 405
+        with requests.Session() as s:
+            if is_initial or request.method in ('GET', 'HEAD'):
+                response = s.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30, allow_redirects=False)
+            elif request.method == 'POST':
+                response = s.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=30, allow_redirects=False)
+            else:
+                return 'Unsupported method', 405
         
         # Calculate full proxy path
         proxy_path = request.host_url.rstrip('/') + '/proxy'
@@ -197,14 +232,17 @@ def proxy():
                 if header.lower() not in ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'location']:
                     resp.headers[header] = value
             resp.headers['Access-Control-Allow-Origin'] = '*'
-            resp.set_cookie('proxy_session_id', proxy_session_random, max_age=3600, httponly=True, secure=True, samesite='None')
+            resp.set_cookie('proxy_session_id', proxy_session_random, max_age=3600, httponly=True, secure=True if 'https' in request.host_url else False, samesite='None')
             return resp
         
         content_type = response.headers.get('Content-Type', '')
         if 'text/html' in content_type:
-            rewritten_content = rewrite_html(response.text, target_url, proxy_path)
+            rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxies, headers)
             resp = make_response(rewritten_content, response.status_code)
         else:
+            # Cache non-HTML if not in cache
+            if target_url not in resource_cache:
+                resource_cache[target_url] = (response.content, content_type)
             resp = make_response(response.content, response.status_code)
         
         resp.headers['Content-Type'] = content_type
@@ -218,7 +256,7 @@ def proxy():
             resp.set_data(b'')
             resp.headers['Content-Length'] = '0'
         
-        resp.set_cookie('proxy_session_id', proxy_session_random, max_age=3600, httponly=True, secure=True, samesite='None')
+        resp.set_cookie('proxy_session_id', proxy_session_random, max_age=3600, httponly=True, secure=True if 'https' in request.host_url else False, samesite='None')
         
         return resp
     
