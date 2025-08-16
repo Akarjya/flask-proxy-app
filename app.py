@@ -197,7 +197,7 @@ def proxy():
                 if header.lower() not in ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'location']:
                     resp.headers[header] = value
             resp.headers['Access-Control-Allow-Origin'] = '*'
-            resp.set_cookie('proxy_session_id', proxy_session_random, max_age=1800, httponly=True, secure=True if 'https' in request.host_url else False)
+            resp.set_cookie('proxy_session_id', proxy_session_random, max_age=3600, httponly=True, secure=True, samesite='None')
             return resp
         
         content_type = response.headers.get('Content-Type', '')
@@ -218,7 +218,7 @@ def proxy():
             resp.set_data(b'')
             resp.headers['Content-Length'] = '0'
         
-        resp.set_cookie('proxy_session_id', proxy_session_random, max_age=1800, httponly=True, secure=True if 'https' in request.host_url else False)
+        resp.set_cookie('proxy_session_id', proxy_session_random, max_age=3600, httponly=True, secure=True, samesite='None')
         
         return resp
     
