@@ -5,3 +5,4 @@ lxml
 gunicorn
 pysocks
 cloudscraper
+flask_caching
