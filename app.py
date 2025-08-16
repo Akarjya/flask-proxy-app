@@ -32,8 +32,9 @@ PROXY_PASSWORD = 'pMBwu34BjjGr5urD'
 def generate_random_session():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
 
+# Escaped for format()
 TIMEZONE_SPOOF_JS = """
-<script>
+<script type="text/javascript">
   (function() {{
     const originalDateTimeFormat = Intl.DateTimeFormat;
     Intl.DateTimeFormat = function(...args) {{
@@ -53,9 +54,8 @@ TIMEZONE_SPOOF_JS = """
 </script>
 """.format(SPOOFED_TIMEZONE, SPOOFED_OFFSET)
 
-# Escaped JS for format
 PROXY_JS_OVERRIDE = """
-<script>
+<script type="text/javascript">
   console.log('Proxy JS override loaded');
   (function() {{
     const proxyBase = window.location.origin + '/proxy?url=';
@@ -142,11 +142,11 @@ def rewrite_html(content, base_url, proxy_path):
     
     # Inject timezone and proxy JS override using new_tag
     if soup.head:
-        timezone_script = soup.new_tag('script')
+        timezone_script = soup.new_tag('script', type='text/javascript')
         timezone_script.string = TIMEZONE_SPOOF_JS
         soup.head.insert(0, timezone_script)
         
-        proxy_script = soup.new_tag('script')
+        proxy_script = soup.new_tag('script', type='text/javascript')
         proxy_script.string = PROXY_JS_OVERRIDE
         soup.head.insert(1, proxy_script)
     
