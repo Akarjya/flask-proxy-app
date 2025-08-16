@@ -10,7 +10,7 @@ import os
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 
-# Final website URL (changed to a more reliable IP checker that loads properly)
+# Final website URL
 FINAL_URL = 'https://www.whatismyipaddress.com/'
 
 # Spoofed Timezone and Offset for New York
@@ -51,7 +51,6 @@ TIMEZONE_SPOOF_JS = f"""
 </script>
 """
 
-# JS to override redirects, refreshes, and client-side requests
 PROXY_JS_OVERRIDE = """
 <script>
   (function() {{
@@ -105,16 +104,13 @@ SESSION_TIMEOUT = 50
 def rewrite_html(content, base_url, proxy_path):
     soup = BeautifulSoup(content, 'lxml')
     
-    # Remove meta refresh tags to prevent auto-redirect
     for meta in soup.find_all('meta', attrs={'http-equiv': 'refresh'}):
         meta.decompose()
     
-    # Add base tag for relative URLs
     if soup.head:
         base_tag = soup.new_tag('base', href=base_url)
         soup.head.insert(0, base_tag)
     
-    # Rewrite all possible links (expanded attrs)
     for tag in soup.find_all(['a', 'img', 'script', 'link', 'form', 'iframe', 'video', 'source', 'audio', 'embed'], attrs={'href': True, 'src': True, 'action': True, 'poster': True, 'data-src': True, 'data-lazy-src': True, 'data-url': True}):
         for attr in ['href', 'src', 'action', 'poster', 'data-src', 'data-lazy-src', 'data-url']:
             if tag.has_attr(attr):
@@ -123,14 +119,24 @@ def rewrite_html(content, base_url, proxy_path):
                     full_url = urljoin(base_url, original_url)
                     tag[attr] = f'{proxy_path}?url={quote_plus(full_url)}'
     
-    # Inject timezone and proxy JS override
     if soup.head:
         soup.head.insert(0, BeautifulSoup(TIMEZONE_SPOOF_JS + PROXY_JS_OVERRIDE, 'html.parser'))
     
     return str(soup)
 
-@app.route('/proxy', methods=['GET', 'POST'])
+@app.route('/', methods=['GET'])
+def home():
+    return "Proxy app is live. Go to /proxy to access the site."
+
+@app.route('/proxy', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
 def proxy():
+    if request.method == 'OPTIONS':
+        resp = Response('')
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, HEAD, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        return resp
+
     if 'last_activity' in session:
         if time.time() - session['last_activity'] > SESSION_TIMEOUT:
             session.clear()
@@ -151,11 +157,8 @@ def proxy():
     target_url = request.args.get('url')
     is_initial = False
     if not target_url:
-        if request.method == 'POST':
-            target_url = FINAL_URL
-            is_initial = True
-        else:
-            return 'No URL provided', 400
+        target_url = FINAL_URL
+        is_initial = True
     
     headers = {
         'User-Agent': request.headers.get('User-Agent', 'Unknown'),
@@ -165,26 +168,24 @@ def proxy():
     }
     
     try:
-        if is_initial or request.method == 'GET':
+        if is_initial or request.method in ('GET', 'HEAD'):
             response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30, allow_redirects=False)
         elif request.method == 'POST':
             response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=30, allow_redirects=False)
         else:
             return 'Unsupported method', 405
         
-        # Handle redirects
         if 300 <= response.status_code < 400 and 'location' in response.headers:
             location = urljoin(target_url, response.headers['location'])
             redirected_url = f'/proxy?url={quote_plus(location)}'
             resp = Response('', status=response.status_code)
             resp.headers['Location'] = redirected_url
-            # Copy other headers if needed
             for header, value in response.headers.items():
                 if header.lower() not in ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'location']:
                     resp.headers[header] = value
+            resp.headers['Access-Control-Allow-Origin'] = '*'
             return resp
         
-        # Normal response
         content_type = response.headers.get('Content-Type', '')
         if 'text/html' in content_type:
             rewritten_content = rewrite_html(response.text, target_url, '/proxy')
@@ -193,11 +194,15 @@ def proxy():
             resp = Response(response.content, status=response.status_code)
         
         resp.headers['Content-Type'] = content_type
-        
-        # Copy other response headers (e.g., Set-Cookie)
         for header, value in response.headers.items():
             if header.lower() not in ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'content-type']:
                 resp.headers[header] = value
+        
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        
+        if request.method == 'HEAD':
+            resp.set_data(b'')
+            resp.headers['Content-Length'] = '0'
         
         return resp
     
