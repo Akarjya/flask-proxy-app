@@ -1,4 +1,5 @@
-from flask import Flask, request, Response, session, make_response
+from flask import Flask, request, Response, session
+from flask_caching import Cache
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote_plus
@@ -11,9 +12,10 @@ from datetime import timedelta
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
+cache = Cache(app, config={'CACHE_TYPE': 'SimpleCache'})
 
 # Final website URL
-FINAL_URL = 'https://ybsq.xyz/'
+FINAL_URL = 'https://www.iplocation.net/'
 
 # Spoofed Timezone and Offset for New York
 SPOOFED_TIMEZONE = 'America/New_York'
@@ -137,6 +139,7 @@ def home():
     return "Proxy app is live. Go to /proxy to access the site."
 
 @app.route('/proxy', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
+@cache.cached(timeout=300, query_string=True)  # Cache for 5 mins, key on full query
 def proxy():
     if request.method == 'OPTIONS':
         resp = Response('')
@@ -179,9 +182,9 @@ def proxy():
     
     try:
         if is_initial or request.method in ('GET', 'HEAD'):
-            response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30, allow_redirects=False)
+            response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=60, allow_redirects=False)
         elif request.method == 'POST':
-            response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=30, allow_redirects=False)
+            response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=60, allow_redirects=False)
         else:
             return 'Unsupported method', 405
         
