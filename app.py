@@ -135,10 +135,11 @@ def rewrite_html(content, base_url, proxy_path):
                     full_url = urljoin(base_url, original_url)
                     tag[attr] = f'{proxy_path}?url={quote_plus(full_url)}'
     
-    # Fix specific IP script: Replace fetch URL directly to force proxy
+    # Fix specific IP script: Replace fetch URL with absolute proxy URL
     for script in soup.find_all('script'):
         if script.string and "fetch('https://ipapi.co/json/')" in script.string:
-            script.string = script.string.replace("fetch('https://ipapi.co/json/')", "fetch('/proxy?url=https%3A%2F%2Fipapi.co%2Fjson%2F')")
+            absolute_fetch_url = proxy_path + '?url=' + quote_plus('https://ipapi.co/json/')
+            script.string = script.string.replace("fetch('https://ipapi.co/json/')", f"fetch('{absolute_fetch_url}')")
     
     # Inject timezone and proxy JS override as first in head
     if soup.head:
