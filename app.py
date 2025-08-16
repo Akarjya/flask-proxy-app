@@ -12,8 +12,8 @@ app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 
-# Final website URL
-FINAL_URL = 'https://www.iplocation.net/'
+# Final website URL (changed to simple IP checker for fast testing; change to your site later)
+FINAL_URL = 'https://httpbin.org/ip'
 
 # Spoofed Timezone and Offset for New York
 SPOOFED_TIMEZONE = 'America/New_York'
@@ -139,7 +139,7 @@ def home():
 @app.route('/proxy', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
 def proxy():
     if request.method == 'OPTIONS':
-        resp = Response('')
+        resp = make_response('')
         resp.headers['Access-Control-Allow-Origin'] = '*'
         resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, HEAD, OPTIONS'
         resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
@@ -153,12 +153,12 @@ def proxy():
     
     session['last_activity'] = time.time()
     
-    if 'proxy_session_random' not in session:
-        session['proxy_session_random'] = generate_random_session()
-        session.modified = True
+    # Explicit cookie for sticky IP
+    proxy_session_random = request.cookies.get('proxy_session_id')
+    if not proxy_session_random:
+        proxy_session_random = generate_random_session()
     
-    random_session = session['proxy_session_random']
-    username = f'{BASE_USERNAME}{random_session}{USERNAME_SUFFIX}'
+    username = f'{BASE_USERNAME}{proxy_session_random}{USERNAME_SUFFIX}'
     proxies = {
         'http': f'socks5://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}',
         'https': f'socks5://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}'
@@ -197,6 +197,7 @@ def proxy():
                 if header.lower() not in ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'location']:
                     resp.headers[header] = value
             resp.headers['Access-Control-Allow-Origin'] = '*'
+            resp.set_cookie('proxy_session_id', proxy_session_random, max_age=1800, httponly=True, secure=True if 'https' in request.host_url else False)
             return resp
         
         content_type = response.headers.get('Content-Type', '')
@@ -216,6 +217,8 @@ def proxy():
         if request.method == 'HEAD':
             resp.set_data(b'')
             resp.headers['Content-Length'] = '0'
+        
+        resp.set_cookie('proxy_session_id', proxy_session_random, max_age=1800, httponly=True, secure=True if 'https' in request.host_url else False)
         
         return resp
     
