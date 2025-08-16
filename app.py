@@ -32,12 +32,83 @@ PROXY_PASSWORD = 'pMBwu34BjjGr5urD'
 def generate_random_session():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
 
-TIMEZONE_SPOOF_JS = f"""
-<script>(function() {{const originalDateTimeFormat = Intl.DateTimeFormat;Intl.DateTimeFormat = function(...args) {{const dtf = new originalDateTimeFormat(...args);const originalResolvedOptions = dtf.resolvedOptions;dtf.resolvedOptions = function() {{const options = originalResolvedOptions.call(dtf);options.timeZone = '{SPOOFED_TIMEZONE}';return options;}};return dtf;}};Date.prototype.getTimezoneOffset = function() {{return {SPOOFED_OFFSET};}};}})();</script>
-"""
+TIMEZONE_SPOOF_JS = """
+<script>
+  (function() {
+    const originalDateTimeFormat = Intl.DateTimeFormat;
+    Intl.DateTimeFormat = function(...args) {
+      const dtf = new originalDateTimeFormat(...args);
+      const originalResolvedOptions = dtf.resolvedOptions;
+      dtf.resolvedOptions = function() {
+        const options = originalResolvedOptions.call(dtf);
+        options.timeZone = '{SPOOFED_TIMEZONE}';
+        return options;
+      };
+      return dtf;
+    };
+    Date.prototype.getTimezoneOffset = function() {
+      return {SPOOFED_OFFSET};
+    };
+  })();
+</script>
+""".format(SPOOFED_TIMEZONE=SPOOFED_TIMEZONE, SPOOFED_OFFSET=SPOOFED_OFFSET)
 
 PROXY_JS_OVERRIDE = """
-<script>console.log('Proxy JS override loaded');(function() {{const proxyBase = window.location.origin + '/proxy?url=';const originalFetch = window.fetch;window.fetch = function(url, options) {{console.log('Intercepted fetch to:', url);if (typeof url === 'string') {{url = proxyBase + encodeURIComponent(url);}} else if (url instanceof Request) {{url = new Request(proxyBase + encodeURIComponent(url.url), url);}}return originalFetch.call(this, url, options);}};const originalXHR = XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open = function(method, url) {{console.log('Intercepted XHR to:', url);url = proxyBase + encodeURIComponent(url);return originalXHR.call(this, method, url);}};const originalSendBeacon = navigator.sendBeacon;navigator.sendBeacon = function(url, data) {{console.log('Intercepted sendBeacon to:', url);url = proxyBase + encodeURIComponent(url);return originalSendBeacon.call(navigator, url, data);}};Object.defineProperty(window.location, 'href', {{set: function(value) {{if (value !== window.location.href) {{value = proxyBase + encodeURIComponent(value);this._value = value;}}},get: function() {{return this._value || window.location.href;}}}});window.location.replace = function(url) {{url = proxyBase + encodeURIComponent(url);this.href = url;}};window.location.assign = function(url) {{url = proxyBase + encodeURIComponent(url);this.href = url;}};window.location.reload = function() {{console.log('Reload blocked by proxy');return;}};document.addEventListener('DOMContentLoaded', function() {{const metas = document.querySelectorAll('meta[http-equiv="refresh"]');metas.forEach(meta => meta.remove());}});}})();</script>
+<script>
+  console.log('Proxy JS override loaded');
+  (function() {
+    const proxyBase = window.location.origin + '/proxy?url=';
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options) {
+      console.log('Intercepted fetch to:', url);
+      if (typeof url === 'string') {
+        url = proxyBase + encodeURIComponent(url);
+      } else if (url instanceof Request) {
+        url = new Request(proxyBase + encodeURIComponent(url.url), url);
+      }
+      return originalFetch.call(this, url, options);
+    };
+    const originalXHR = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+      console.log('Intercepted XHR to:', url);
+      url = proxyBase + encodeURIComponent(url);
+      return originalXHR.call(this, method, url);
+    };
+    const originalSendBeacon = navigator.sendBeacon;
+    navigator.sendBeacon = function(url, data) {
+      console.log('Intercepted sendBeacon to:', url);
+      url = proxyBase + encodeURIComponent(url);
+      return originalSendBeacon.call(navigator, url, data);
+    };
+    Object.defineProperty(window.location, 'href', {
+      set: function(value) {
+        if (value !== window.location.href) {
+          value = proxyBase + encodeURIComponent(value);
+          this._value = value;
+        }
+      },
+      get: function() {
+        return this._value || window.location.href;
+      }
+    });
+    window.location.replace = function(url) {
+      url = proxyBase + encodeURIComponent(url);
+      this.href = url;
+    };
+    window.location.assign = function(url) {
+      url = proxyBase + encodeURIComponent(url);
+      this.href = url;
+    };
+    window.location.reload = function() {
+      console.log('Reload blocked by proxy');
+      return;
+    };
+    document.addEventListener('DOMContentLoaded', function() {
+      const metas = document.querySelectorAll('meta[http-equiv="refresh"]');
+      metas.forEach(meta => meta.remove());
+    });
+  })();
+</script>
 """
 
 SESSION_TIMEOUT = 50
@@ -49,7 +120,7 @@ def rewrite_html(content, base_url, proxy_path):
     for meta in soup.find_all('meta', attrs={'http-equiv': 'refresh'}):
         meta.decompose()
     
-    # NO base tag - removed to avoid relative confusion
+    # NO base tag - to avoid relative URL confusion
     
     # Rewrite all possible links
     attrs_list = ['href', 'src', 'action', 'poster', 'data-src', 'data-lazy-src', 'data-url']
@@ -68,9 +139,15 @@ def rewrite_html(content, base_url, proxy_path):
             absolute_fetch_url = proxy_path + '?url=' + quote_plus('https://ipapi.co/json/')
             script.string = script.string.replace("fetch('https://ipapi.co/json/')", f"fetch('{absolute_fetch_url}')")
     
-    # Inject timezone and proxy JS override as first in head
+    # Inject timezone and proxy JS override using new_tag to avoid parsing issues
     if soup.head:
-        soup.head.insert(0, BeautifulSoup(TIMEZONE_SPOOF_JS + PROXY_JS_OVERRIDE, 'html.parser'))
+        timezone_script = soup.new_tag('script')
+        timezone_script.string = TIMEZONE_SPOOF_JS.strip()
+        soup.head.insert(0, timezone_script)
+        
+        proxy_script = soup.new_tag('script')
+        proxy_script.string = PROXY_JS_OVERRIDE.strip()
+        soup.head.insert(1, proxy_script)
     
     return str(soup)
 
