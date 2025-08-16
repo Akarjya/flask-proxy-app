@@ -20,7 +20,7 @@ Compress(app)
 resource_cache = {}
 
 # Final website URL (iplocation.com for IP+location)
-FINAL_URL = 'https://iplocation.com/'
+FINAL_URL = 'https://www.whatismyip.com/'
 
 # Spoofed Timezone and Offset for New York
 SPOOFED_TIMEZONE = 'America/New_York'
