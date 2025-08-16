@@ -1,5 +1,4 @@
 from flask import Flask, request, Response, session, make_response
-from flask_compress import Compress
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote_plus
@@ -8,18 +7,12 @@ import string
 import time
 import os
 from datetime import timedelta
-import base64
-from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
-Compress(app)
 
-# Cache dict for resources (global, not per session)
-resource_cache = {}
-
-# Final website URL (iplocation.com for IP+location)
+# Final website URL (your WordPress site)
 FINAL_URL = 'https://ybsq.xyz/'
 
 # Spoofed Timezone and Offset for New York
@@ -62,9 +55,11 @@ TIMEZONE_SPOOF_JS = f"""
 
 PROXY_JS_OVERRIDE = """
 <script>
+  console.log('Proxy JS override loaded');
   (function() {{
     const originalFetch = window.fetch;
     window.fetch = function(url, options) {{
+      console.log('Intercepted fetch to:', url);
       if (typeof url === 'string') {{
         url = '/proxy?url=' + encodeURIComponent(url);
       }} else if (url instanceof Request) {{
@@ -74,8 +69,15 @@ PROXY_JS_OVERRIDE = """
     }};
     const originalXHR = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {{
+      console.log('Intercepted XHR to:', url);
       url = '/proxy?url=' + encodeURIComponent(url);
       return originalXHR.call(this, method, url);
+    }};
+    const originalSendBeacon = navigator.sendBeacon;
+    navigator.sendBeacon = function(url, data) {{
+      console.log('Intercepted sendBeacon to:', url);
+      url = '/proxy?url=' + encodeURIComponent(url);
+      return originalSendBeacon.call(navigator, url, data);
     }};
     Object.defineProperty(window.location, 'href', {{
       set: function(value) {{
@@ -110,17 +112,7 @@ PROXY_JS_OVERRIDE = """
 
 SESSION_TIMEOUT = 50
 
-def fetch_resource(url, proxies, headers):
-    try:
-        with requests.Session() as s:
-            resp = s.get(url, proxies=proxies, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                return resp.content, resp.headers.get('Content-Type')
-    except:
-        pass
-    return None, None
-
-def rewrite_html(content, base_url, proxy_path, proxies, headers):
+def rewrite_html(content, base_url, proxy_path):
     soup = BeautifulSoup(content, 'lxml')
     
     # Remove meta refresh tags to prevent auto-redirect
@@ -132,8 +124,7 @@ def rewrite_html(content, base_url, proxy_path, proxies, headers):
         base_tag = soup.new_tag('base', href=base_url)
         soup.head.insert(0, base_tag)
     
-    # Collect all resource URLs for potential inlining
-    resources = []
+    # Rewrite all possible links
     attrs_list = ['href', 'src', 'action', 'poster', 'data-src', 'data-lazy-src', 'data-url']
     tags_list = ['a', 'img', 'script', 'link', 'form', 'iframe', 'video', 'source', 'audio', 'embed']
     for tag in soup.find_all(lambda tag: tag.name in tags_list and any(tag.has_attr(attr) for attr in attrs_list)):
@@ -142,25 +133,14 @@ def rewrite_html(content, base_url, proxy_path, proxies, headers):
                 original_url = tag[attr]
                 if original_url:
                     full_url = urljoin(base_url, original_url)
-                    resources.append(full_url)
                     tag[attr] = f'{proxy_path}?url={quote_plus(full_url)}'
     
-    # Parallel fetch small resources for inlining
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(fetch_resource, url, proxies, headers) for url in resources]
-        for future, tag in zip(futures, soup.find_all()):
-            content, ctype = future.result()
-            if content and len(content) < 10240:  # Inline if <10KB
-                if 'image' in ctype:
-                    tag['src'] = f'data:{ctype};base64,' + base64.b64encode(content).decode()
-                elif 'css' in ctype and tag.name == 'link':
-                    style_tag = soup.new_tag('style')
-                    style_tag.string = content.decode()
-                    tag.replace_with(style_tag)
-                elif 'javascript' in ctype and tag.name == 'script':
-                    tag.string = content.decode()
+    # Fix specific IP script: Replace fetch URL directly to force proxy
+    for script in soup.find_all('script'):
+        if script.string and "fetch('https://ipapi.co/json/')" in script.string:
+            script.string = script.string.replace("fetch('https://ipapi.co/json/')", "fetch('/proxy?url=https%3A%2F%2Fipapi.co%2Fjson%2F')")
     
-    # Inject timezone and proxy JS override
+    # Inject timezone and proxy JS override as first in head
     if soup.head:
         soup.head.insert(0, BeautifulSoup(TIMEZONE_SPOOF_JS + PROXY_JS_OVERRIDE, 'html.parser'))
     
@@ -212,13 +192,12 @@ def proxy():
     }
     
     try:
-        with requests.Session() as s:
-            if is_initial or request.method in ('GET', 'HEAD'):
-                response = s.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30, allow_redirects=False)
-            elif request.method == 'POST':
-                response = s.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=30, allow_redirects=False)
-            else:
-                return 'Unsupported method', 405
+        if is_initial or request.method in ('GET', 'HEAD'):
+            response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30, allow_redirects=False)
+        elif request.method == 'POST':
+            response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=30, allow_redirects=False)
+        else:
+            return 'Unsupported method', 405
         
         # Calculate full proxy path
         proxy_path = request.host_url.rstrip('/') + '/proxy'
@@ -237,12 +216,9 @@ def proxy():
         
         content_type = response.headers.get('Content-Type', '')
         if 'text/html' in content_type:
-            rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxies, headers)
+            rewritten_content = rewrite_html(response.text, target_url, proxy_path)
             resp = make_response(rewritten_content, response.status_code)
         else:
-            # Cache non-HTML if not in cache
-            if target_url not in resource_cache:
-                resource_cache[target_url] = (response.content, content_type)
             resp = make_response(response.content, response.status_code)
         
         resp.headers['Content-Type'] = content_type
