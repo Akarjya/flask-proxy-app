@@ -11,7 +11,7 @@ app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'  # Testing ke liye, baad mein change karo
 
 # Final website URL (testing ke liye IP check)
-FINAL_URL = 'https://ybsq.xyz/'
+FINAL_URL = 'https://www.whatismyip.com/'
 
 # Spoofed Timezone and Offset for New York
 SPOOFED_TIMEZONE = 'America/New_York'
