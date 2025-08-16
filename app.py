@@ -44,7 +44,6 @@ TIMEZONE_SPOOF_JS = f"""
       }};
       return dtf;
     }};
-
     Date.prototype.getTimezoneOffset = function() {{
       return {SPOOFED_OFFSET};
     }};
@@ -65,13 +64,11 @@ PROXY_JS_OVERRIDE = """
       }}
       return originalFetch.call(this, url, options);
     }};
-
     const originalXHR = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {{
       url = '/proxy?url=' + encodeURIComponent(url);
       return originalXHR.call(this, method, url);
     }};
-
     Object.defineProperty(window.location, 'href', {{
       set: function(value) {{
         if (value !== window.location.href) {{
@@ -83,22 +80,18 @@ PROXY_JS_OVERRIDE = """
         return this._value || window.location.href;
       }}
     }});
-
     window.location.replace = function(url) {{
       url = '/proxy?url=' + encodeURIComponent(url);
       this.href = url;
     }};
-
     window.location.assign = function(url) {{
       url = '/proxy?url=' + encodeURIComponent(url);
       this.href = url;
     }};
-
     window.location.reload = function() {{
       console.log('Reload blocked by proxy');
       return;
     }};
-
     document.addEventListener('DOMContentLoaded', function() {{
       const metas = document.querySelectorAll('meta[http-equiv="refresh"]');
       metas.forEach(meta => meta.remove());
@@ -144,24 +137,22 @@ def proxy():
             return 'Session expired due to inactivity. Please start again.', 403
     
     session['last_activity'] = time.time()
-
+    
     if 'proxy_session_random' not in session:
         session['proxy_session_random'] = generate_random_session()
     
     random_session = session['proxy_session_random']
-
     username = f'{BASE_USERNAME}{random_session}{USERNAME_SUFFIX}'
-
     proxies = {
         'http': f'socks5://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}',
         'https': f'socks5://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}'
     }
-
-    if request.method == 'POST':
-        target_url = FINAL_URL
-    else:
-        target_url = request.args.get('url')
-        if not target_url:
+    
+    target_url = request.args.get('url')
+    if not target_url:
+        if request.method == 'POST':
+            target_url = FINAL_URL
+        else:
             return 'No URL provided', 400
     
     headers = {
@@ -172,13 +163,39 @@ def proxy():
     }
     
     try:
-        response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30)
-        
-        if 'text/html' in response.headers.get('Content-Type', ''):
-            rewritten_content = rewrite_html(response.text, target_url, '/proxy')
-            resp = Response(rewritten_content, status=response.status_code, content_type=response.headers['Content-Type'])
+        if request.method == 'GET':
+            response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30, allow_redirects=False)
+        elif request.method == 'POST':
+            response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=30, allow_redirects=False)
         else:
-            resp = Response(response.content, status=response.status_code, content_type=response.headers['Content-Type'])
+            return 'Unsupported method', 405
+        
+        # Handle redirects
+        if 300 <= response.status_code < 400 and 'location' in response.headers:
+            location = urljoin(target_url, response.headers['location'])
+            redirected_url = f'/proxy?url={quote_plus(location)}'
+            resp = Response('', status=response.status_code)
+            resp.headers['Location'] = redirected_url
+            # Copy other headers if needed
+            for header, value in response.headers.items():
+                if header.lower() not in ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'location']:
+                    resp.headers[header] = value
+            return resp
+        
+        # Normal response
+        content_type = response.headers.get('Content-Type', '')
+        if 'text/html' in content_type:
+            rewritten_content = rewrite_html(response.text, target_url, '/proxy')
+            resp = Response(rewritten_content, status=response.status_code)
+        else:
+            resp = Response(response.content, status=response.status_code)
+        
+        resp.headers['Content-Type'] = content_type
+        
+        # Copy other response headers (e.g., Set-Cookie)
+        for header, value in response.headers.items():
+            if header.lower() not in ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'content-type']:
+                resp.headers[header] = value
         
         return resp
     
