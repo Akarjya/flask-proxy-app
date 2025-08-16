@@ -11,7 +11,7 @@ app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 
 # Final website URL
-FINAL_URL = 'https://www.xvideos.com'  # Real site
+FINAL_URL = 'https://www.whatismyip.com/'  # Real site
 
 # Spoofed Timezone and Offset for New York
 SPOOFED_TIMEZONE = 'America/New_York'
