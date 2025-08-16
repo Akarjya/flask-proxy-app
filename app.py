@@ -1,16 +1,18 @@
-from flask import Flask, request, Response, session
-import cloudscraper
+from flask import Flask, request, Response, session, make_response
+import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote_plus
 import random
 import string
 import time
 import os
+from datetime import timedelta
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 
-# Final website URL (changed to a site without Cloudflare challenge issues)
+# Final website URL
 FINAL_URL = 'https://www.iplocation.net/'
 
 # Spoofed Timezone and Offset for New York
@@ -143,6 +145,7 @@ def proxy():
         resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
         return resp
 
+    session.permanent = True
     if 'last_activity' in session:
         if time.time() - session['last_activity'] > SESSION_TIMEOUT:
             session.clear()
@@ -152,6 +155,7 @@ def proxy():
     
     if 'proxy_session_random' not in session:
         session['proxy_session_random'] = generate_random_session()
+        session.modified = True
     
     random_session = session['proxy_session_random']
     username = f'{BASE_USERNAME}{random_session}{USERNAME_SUFFIX}'
@@ -173,13 +177,11 @@ def proxy():
         'Referer': request.headers.get('Referer'),
     }
     
-    scraper = cloudscraper.create_scraper()
-    
     try:
         if is_initial or request.method in ('GET', 'HEAD'):
-            response = scraper.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30, allow_redirects=False)
+            response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30, allow_redirects=False)
         elif request.method == 'POST':
-            response = scraper.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=30, allow_redirects=False)
+            response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=30, allow_redirects=False)
         else:
             return 'Unsupported method', 405
         
