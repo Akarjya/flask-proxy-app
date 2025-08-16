@@ -8,10 +8,10 @@ import time
 import os
 
 app = Flask(__name__)
-app.secret_key = 'super_secret_key_for_testing'  # Testing ke liye, baad mein change karo
+app.secret_key = 'super_secret_key_for_testing'
 
-# Final website URL (testing ke liye IP check)
-FINAL_URL = 'https://www.whatismyip.com/'
+# Final website URL
+FINAL_URL = 'https://www.xvideos.com'  # Real site
 
 # Spoofed Timezone and Offset for New York
 SPOOFED_TIMEZONE = 'America/New_York'
@@ -52,21 +52,51 @@ TIMEZONE_SPOOF_JS = f"""
 </script>
 """
 
+# New JS to override client-side fetches for proxy
+PROXY_JS_OVERRIDE = """
+<script>
+  (function() {{
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options) {{
+      if (typeof url === 'string') {{
+        url = '/proxy?url=' + encodeURIComponent(url);
+      }} else if (url instanceof Request) {{
+        url = new Request('/proxy?url=' + encodeURIComponent(url.url), url);
+      }}
+      return originalFetch.call(this, url, options);
+    }};
+
+    const originalXHR = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {{
+      url = '/proxy?url=' + encodeURIComponent(url);
+      return originalXHR.call(this, method, url);
+    }};
+  }})();
+</script>
+"""
+
 SESSION_TIMEOUT = 50
 
 def rewrite_html(content, base_url, proxy_path):
     soup = BeautifulSoup(content, 'lxml')
     
-    for tag in soup.find_all(['a', 'img', 'script', 'link', 'form', 'iframe'], attrs={'href': True, 'src': True, 'action': True}):
-        for attr in ['href', 'src', 'action']:
+    # Add base tag for relative URLs
+    if soup.head:
+        base_tag = soup.new_tag('base', href=base_url)
+        soup.head.insert(0, base_tag)
+    
+    # Rewrite all possible links (expanded)
+    for tag in soup.find_all(['a', 'img', 'script', 'link', 'form', 'iframe', 'video', 'source', 'audio', 'embed'], attrs={'href': True, 'src': True, 'action': True, 'poster': True, 'data-src': True, 'data-lazy-src': True, 'data-url': True}):
+        for attr in ['href', 'src', 'action', 'poster', 'data-src', 'data-lazy-src', 'data-url']:
             if tag.has_attr(attr):
                 original_url = tag[attr]
                 if original_url:
                     full_url = urljoin(base_url, original_url)
                     tag[attr] = f'{proxy_path}?url={quote_plus(full_url)}'
     
+    # Inject timezone and proxy JS override
     if soup.head:
-        soup.head.insert(0, BeautifulSoup(TIMEZONE_SPOOF_JS, 'html.parser'))
+        soup.head.insert(0, BeautifulSoup(TIMEZONE_SPOOF_JS + PROXY_JS_OVERRIDE, 'html.parser'))
     
     return str(soup)
 
@@ -106,7 +136,7 @@ def proxy():
     }
     
     try:
-        response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies)
+        response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30)  # Timeout add kiya hang avoid ke liye
         
         if 'text/html' in response.headers.get('Content-Type', ''):
             rewritten_content = rewrite_html(response.text, target_url, '/proxy')
