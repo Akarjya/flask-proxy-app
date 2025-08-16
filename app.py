@@ -97,10 +97,11 @@ def proxy():
     username = f'{BASE_USERNAME}{random_session}{USERNAME_SUFFIX}'
 
     # Proxies with sticky (same IP for this user)
-    proxies = {
-        'http': f'http://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}',
-        'https': f'http://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}'
-    }
+    # Proxies with sticky (same IP for this user)
+proxies = {
+    'http': f'socks5://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}',
+    'https': f'socks5://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}'
+}
 
     # Determine target URL
     if request.method == 'POST':
