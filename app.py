@@ -104,21 +104,27 @@ SESSION_TIMEOUT = 50
 def rewrite_html(content, base_url, proxy_path):
     soup = BeautifulSoup(content, 'lxml')
     
+    # Remove meta refresh tags to prevent auto-redirect
     for meta in soup.find_all('meta', attrs={'http-equiv': 'refresh'}):
         meta.decompose()
     
+    # Add base tag for relative URLs
     if soup.head:
         base_tag = soup.new_tag('base', href=base_url)
         soup.head.insert(0, base_tag)
     
-    for tag in soup.find_all(['a', 'img', 'script', 'link', 'form', 'iframe', 'video', 'source', 'audio', 'embed'], attrs={'href': True, 'src': True, 'action': True, 'poster': True, 'data-src': True, 'data-lazy-src': True, 'data-url': True}):
-        for attr in ['href', 'src', 'action', 'poster', 'data-src', 'data-lazy-src', 'data-url']:
+    # Rewrite all possible links (fixed to match tags with ANY of the attrs)
+    attrs_list = ['href', 'src', 'action', 'poster', 'data-src', 'data-lazy-src', 'data-url']
+    tags_list = ['a', 'img', 'script', 'link', 'form', 'iframe', 'video', 'source', 'audio', 'embed']
+    for tag in soup.find_all(lambda tag: tag.name in tags_list and any(tag.has_attr(attr) for attr in attrs_list)):
+        for attr in attrs_list:
             if tag.has_attr(attr):
                 original_url = tag[attr]
                 if original_url:
                     full_url = urljoin(base_url, original_url)
                     tag[attr] = f'{proxy_path}?url={quote_plus(full_url)}'
     
+    # Inject timezone and proxy JS override
     if soup.head:
         soup.head.insert(0, BeautifulSoup(TIMEZONE_SPOOF_JS + PROXY_JS_OVERRIDE, 'html.parser'))
     
