@@ -15,7 +15,7 @@ app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 app.config['CACHE_TYPE'] = 'SimpleCache'
-app.config['CACHE_DEFAULT_TIMEOUT'] = 60  # Short for HTML, longer for static below
+app.config['CACHE_DEFAULT_TIMEOUT'] = 30  # Shorter for HTML
 
 cache = Cache(app)
 Compress(app)
@@ -39,6 +39,9 @@ PROXY_PASSWORD = 'pMBwu34BjjGr5urD'
 
 def generate_random_session():
     return ''.join(random.choices(string.digits, k=8))
+
+# Persistent session per proxy
+proxy_sessions = {}  # Dict to store requests.Session per session_id
 
 # Use % formatting, removed outer <script> tags
 TIMEZONE_SPOOF_JS = """
@@ -112,26 +115,26 @@ PROXY_JS_OVERRIDE = """
     document.addEventListener('DOMContentLoaded', function() {
       const metas = document.querySelectorAll('meta[http-equiv="refresh"]');
       metas.forEach(meta => meta.remove());
-      // Keep-alive ping every 1 min
+      // Keep-alive ping every 30 sec to prevent idle IP change
       setInterval(() => {
         fetch(proxyBase + encodeURIComponent('https://ybsq.xyz/'), { method: 'HEAD' }).catch(() => {});
-      }, 60000);
+      }, 30000);
     });
   })();
 """
 
 SESSION_TIMEOUT = 300
 
-def fetch_asset(url, proxies, headers):
+def fetch_asset(url, proxy_session, headers):
     try:
-        resp = requests.get(url, proxies=proxies, headers=headers, timeout=10, verify=False)
+        resp = proxy_session.get(url, headers=headers, timeout=10, verify=False)
         if resp.status_code == 200 and len(resp.content) < 10240:  # <10KB
             return resp.text, resp.headers.get('Content-Type', '')
         return None, None
     except:
         return None, None
 
-def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxies, headers):
+def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_session, headers):
     soup = BeautifulSoup(content, 'lxml')
     
     # Remove meta refresh
@@ -148,9 +151,9 @@ def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxies, h
             full_url = urljoin(base_url, tag['src'])
             to_inline.append((tag, full_url, 'js'))
     
-    # Parallel fetch
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(fetch_asset, item[1], proxies, headers): item for item in to_inline}
+    # Parallel fetch with larger pool
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(fetch_asset, item[1], proxy_session, headers): item for item in to_inline}
         for future in as_completed(futures):
             tag, _, typ = futures[future]
             data, ctype = future.result()
@@ -196,7 +199,7 @@ def home():
     return "Proxy app is live. Go to /proxy to access the site."
 
 @app.route('/proxy', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
-@cache.cached(timeout=60, query_string=True)  # Cache HTML/short-lived, static auto longer
+@cache.cached(timeout=30, query_string=True)
 def proxy():
     if request.method == 'OPTIONS':
         resp = make_response('')
@@ -231,6 +234,12 @@ def proxy():
         'https': f'socks5h://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}'
     }
     
+    # Get or create persistent session
+    if proxy_session_random not in proxy_sessions:
+        proxy_sessions[proxy_session_random] = requests.Session()
+    proxy_session = proxy_sessions[proxy_session_random]
+    proxy_session.proxies = proxies
+    
     headers = {
         'User-Agent': request.headers.get('User-Agent', 'Unknown'),
         'Accept': request.headers.get('Accept'),
@@ -240,9 +249,9 @@ def proxy():
     
     try:
         if request.method in ('GET', 'HEAD'):
-            response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=60, allow_redirects=False, verify=False)
+            response = proxy_session.get(target_url, headers=headers, cookies=request.cookies, timeout=60, allow_redirects=False, verify=False)
         elif request.method == 'POST':
-            response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=60, allow_redirects=False, verify=False)
+            response = proxy_session.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), timeout=60, allow_redirects=False, verify=False)
         else:
             return 'Unsupported method', 405
         
@@ -262,7 +271,7 @@ def proxy():
         
         content_type = response.headers.get('Content-Type', '')
         if 'text/html' in content_type:
-            rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxy_session_random, proxies, headers)
+            rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxy_session_random, proxy_session, headers)
             resp = make_response(rewritten_content, response.status_code)
         else:
             resp = make_response(response.content, response.status_code)
