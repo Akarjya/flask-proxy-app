@@ -60,9 +60,9 @@ PROXY_JS_OVERRIDE = """
     const originalFetch = window.fetch;
     window.fetch = function(url, options) {
       console.log('Intercepted fetch to:', url);
-      if (typeof url === 'string') {
+      if (typeof url === 'string' && !url.startsWith(proxyBase)) {  // Avoid double-proxy if already proxied
         url = proxyBase + encodeURIComponent(url);
-      } else if (url instanceof Request) {
+      } else if (url instanceof Request && !url.url.startsWith(proxyBase)) {
         url = new Request(proxyBase + encodeURIComponent(url.url), url);
       }
       return originalFetch.call(this, url, options);
@@ -70,33 +70,32 @@ PROXY_JS_OVERRIDE = """
     const originalXHR = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {
       console.log('Intercepted XHR to:', url);
-      url = proxyBase + encodeURIComponent(url);
+      if (!url.startsWith(proxyBase)) {
+        url = proxyBase + encodeURIComponent(url);
+      }
       return originalXHR.call(this, method, url);
     };
     const originalSendBeacon = navigator.sendBeacon;
     navigator.sendBeacon = function(url, data) {
       console.log('Intercepted sendBeacon to:', url);
-      url = proxyBase + encodeURIComponent(url);
+      if (!url.startsWith(proxyBase)) {
+        url = proxyBase + encodeURIComponent(url);
+      }
       return originalSendBeacon.call(navigator, url, data);
     };
-    Object.defineProperty(window.location, 'href', {
-      set: function(value) {
-        if (value !== window.location.href) {
-          value = proxyBase + encodeURIComponent(value);
-          this._value = value;
-        }
-      },
-      get: function() {
-        return this._value || window.location.href;
-      }
-    });
     window.location.replace = function(url) {
-      url = proxyBase + encodeURIComponent(url);
-      this.href = url;
+      console.log('Intercepted location.replace to:', url);
+      if (!url.startsWith(proxyBase)) {
+        url = proxyBase + encodeURIComponent(url);
+      }
+      return this.href = url;  // Use native set
     };
     window.location.assign = function(url) {
-      url = proxyBase + encodeURIComponent(url);
-      this.href = url;
+      console.log('Intercepted location.assign to:', url);
+      if (!url.startsWith(proxyBase)) {
+        url = proxyBase + encodeURIComponent(url);
+      }
+      return this.href = url;  // Use native set
     };
     window.location.reload = function() {
       console.log('Reload blocked by proxy');
@@ -131,11 +130,7 @@ def rewrite_html(content, base_url, proxy_path):
                     full_url = urljoin(base_url, original_url)
                     tag[attr] = f'{proxy_path}?url={quote_plus(full_url)}'
     
-    # Fix specific IP script: Replace fetch URL with absolute proxy URL
-    for script in soup.find_all('script'):
-        if script.string and "fetch('https://ipapi.co/json/')" in script.string:
-            absolute_fetch_url = proxy_path + '?url=' + quote_plus('https://ipapi.co/json/')
-            script.string = script.string.replace("fetch('https://ipapi.co/json/')", f"fetch('{absolute_fetch_url}')")
+    # Removed specific IP script replacement - let JS override handle it
     
     # Inject timezone and proxy JS override using new_tag
     if soup.head:
