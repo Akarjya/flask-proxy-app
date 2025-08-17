@@ -10,36 +10,28 @@ from datetime import timedelta
 from flask_compress import Compress
 from flask_caching import Cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 app.config['CACHE_TYPE'] = 'SimpleCache'
-app.config['CACHE_DEFAULT_TIMEOUT'] = 30  # Shorter for HTML
-
+app.config['CACHE_DEFAULT_TIMEOUT'] = 30 # Shorter for HTML
 cache = Cache(app)
 Compress(app)
-
 # Final website URL (your WordPress site)
 FINAL_URL = 'https://ybsq.xyz/'
-
 # Spoofed Timezone and Offset for New York
 SPOOFED_TIMEZONE = 'America/New_York'
 SPOOFED_OFFSET = 240
-
 # Spoofed Language
 SPOOFED_LANGUAGE = 'en-US,en;q=0.9'
-
 # Proxydize Proxy Setup
 PROXY_HOST = 'pg.proxi.es'
 PROXY_PORT = 20002
 BASE_USERNAME = 'KMwYgm4pR4upF6yX-s-'
 USERNAME_SUFFIX = '-co-USA-st-NY-ci-NewYorkCity'
 PROXY_PASSWORD = 'pMBwu34BjjGr5urD'
-
 def generate_random_session():
     return ''.join(random.choices(string.digits, k=8))
-
 # Use % formatting, removed outer <script> tags
 TIMEZONE_SPOOF_JS = """
   (function() {
@@ -60,7 +52,6 @@ TIMEZONE_SPOOF_JS = """
     };
   })();
 """ % (SPOOFED_TIMEZONE, SPOOFED_OFFSET)
-
 PROXY_JS_OVERRIDE = """
   console.log('Proxy JS override loaded');
   (function() {
@@ -120,6 +111,29 @@ PROXY_JS_OVERRIDE = """
         return ['en-US', 'en'];
       }
     });
+    // Intercept dynamic script and iframe src
+    const originalCreateElement = document.createElement.bind(document);
+    document.createElement = function(tagName) {
+      const elem = originalCreateElement(tagName);
+      const tagLower = tagName.toLowerCase();
+      if (tagLower === 'script' || tagLower === 'iframe') {
+        Object.defineProperty(elem, 'src', {
+          get: function() {
+            return this.getAttribute('src');
+          },
+          set: function(value) {
+            if (value && !value.startsWith(proxyBase)) {
+              console.log('Intercepted ' + tagLower + ' src set:', value);
+              value = proxyBase + encodeURIComponent(value);
+            }
+            this.setAttribute('src', value);
+          },
+          enumerable: true,
+          configurable: true
+        });
+      }
+      return elem;
+    };
     document.addEventListener('DOMContentLoaded', function() {
       const metas = document.querySelectorAll('meta[http-equiv="refresh"]');
       metas.forEach(meta => meta.remove());
@@ -130,25 +144,22 @@ PROXY_JS_OVERRIDE = """
     });
   })();
 """
-
 SESSION_TIMEOUT = 300
-
 def fetch_asset(url, proxy_session, headers):
     try:
         resp = proxy_session.get(url, headers=headers, timeout=10, verify=False)
-        if resp.status_code == 200 and len(resp.content) < 10240:  # <10KB
+        if resp.status_code == 200 and len(resp.content) < 10240: # <10KB
             return resp.text, resp.headers.get('Content-Type', '')
         return None, None
     except:
         return None, None
-
 def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_session, headers):
     soup = BeautifulSoup(content, 'lxml')
-    
+   
     # Remove meta refresh
     for meta in soup.find_all('meta', attrs={'http-equiv': 'refresh'}):
         meta.decompose()
-    
+   
     # Collect small assets for inlining
     to_inline = []
     for tag in soup.find_all(['link', 'script']):
@@ -158,7 +169,7 @@ def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_sess
         elif tag.name == 'script' and tag.get('src'):
             full_url = urljoin(base_url, tag['src'])
             to_inline.append((tag, full_url, 'js'))
-    
+   
     # Parallel fetch with larger pool
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(fetch_asset, item[1], proxy_session, headers): item for item in to_inline}
@@ -174,7 +185,7 @@ def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_sess
                     script = soup.new_tag('script')
                     script.string = data
                     tag.replace_with(script)
-    
+   
     # Rewrite remaining links
     attrs_list = ['href', 'src', 'action', 'poster', 'data-src', 'data-lazy-src', 'data-url']
     tags_list = ['a', 'img', 'script', 'link', 'form', 'iframe', 'video', 'source', 'audio', 'embed']
@@ -185,27 +196,29 @@ def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_sess
                 if original_url:
                     full_url = urljoin(base_url, original_url)
                     tag[attr] = f'{proxy_path}?session_id={proxy_session_random}&url={quote_plus(full_url)}'
-    
+   
+    # Set html lang to en-US for better language detection
+    if soup.html:
+        soup.html['lang'] = 'en-US'
+   
     # Inject scripts
     if soup.head:
         session_script = soup.new_tag('script')
         session_script.string = f"const PROXY_SESSION_ID = '{proxy_session_random}';"
         soup.head.insert(0, session_script)
-        
+       
         timezone_script = soup.new_tag('script')
         timezone_script.string = TIMEZONE_SPOOF_JS
         soup.head.insert(1, timezone_script)
-        
+       
         proxy_script = soup.new_tag('script')
         proxy_script.string = PROXY_JS_OVERRIDE
         soup.head.insert(2, proxy_script)
-    
+   
     return str(soup)
-
 @app.route('/', methods=['GET'])
 def home():
     return "Proxy app is live. Go to /proxy to access the site."
-
 @app.route('/proxy', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
 @cache.cached(timeout=30, query_string=True)
 def proxy():
@@ -215,46 +228,45 @@ def proxy():
         resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, HEAD, OPTIONS'
         resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
         return resp
-
     session.permanent = True
     if 'last_activity' in session:
         if time.time() - session['last_activity'] > SESSION_TIMEOUT:
             session.clear()
-    
+   
     session['last_activity'] = time.time()
-    
+   
     proxy_session_random = request.args.get('session_id')
     if not proxy_session_random:
         proxy_session_random = request.cookies.get('proxy_session_id')
     if not proxy_session_random:
         proxy_session_random = generate_random_session()
-    
+   
     target_url = request.args.get('url')
     is_initial = not target_url
-    
+   
     if is_initial and not request.args.get('session_id'):
         redirect_url = f'/proxy?session_id={proxy_session_random}&url={quote_plus(FINAL_URL)}'
         return redirect(redirect_url, code=302)
-    
+   
     username = f'{BASE_USERNAME}{proxy_session_random}{USERNAME_SUFFIX}'
     proxies = {
         'http': f'socks5h://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}',
         'https': f'socks5h://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}'
     }
-    
+   
     # Get or create persistent session
     if proxy_session_random not in proxy_sessions:
         proxy_sessions[proxy_session_random] = requests.Session()
     proxy_session = proxy_sessions[proxy_session_random]
     proxy_session.proxies = proxies
-    
+   
     headers = {
         'User-Agent': request.headers.get('User-Agent', 'Unknown'),
         'Accept': request.headers.get('Accept'),
         'Accept-Language': SPOOFED_LANGUAGE,
         'Referer': request.headers.get('Referer'),
     }
-    
+   
     try:
         if request.method in ('GET', 'HEAD'):
             response = proxy_session.get(target_url, headers=headers, cookies=request.cookies, timeout=60, allow_redirects=False, verify=False)
@@ -262,9 +274,9 @@ def proxy():
             response = proxy_session.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), timeout=60, allow_redirects=False, verify=False)
         else:
             return 'Unsupported method', 405
-        
+       
         proxy_path = request.host_url.rstrip('/') + '/proxy'
-        
+       
         if 300 <= response.status_code < 400 and 'location' in response.headers:
             location = urljoin(target_url, response.headers['location'])
             redirected_url = f'{proxy_path}?session_id={proxy_session_random}&url={quote_plus(location)}'
@@ -276,34 +288,32 @@ def proxy():
             resp.headers['Access-Control-Allow-Origin'] = '*'
             resp.set_cookie('proxy_session_id', proxy_session_random, max_age=3600, httponly=True, secure=True if 'https' in request.host_url else False, samesite='None')
             return resp
-        
+       
         content_type = response.headers.get('Content-Type', '')
         if 'text/html' in content_type:
             rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxy_session_random, proxy_session, headers)
             resp = make_response(rewritten_content, response.status_code)
         else:
             resp = make_response(response.content, response.status_code)
-        
+       
         resp.headers['Content-Type'] = content_type
         for header, value in response.headers.items():
             if header.lower() not in ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'content-type']:
                 resp.headers[header] = value
-        
+       
         resp.headers['Access-Control-Allow-Origin'] = '*'
-        
+       
         if request.method == 'HEAD':
             resp.set_data(b'')
             resp.headers['Content-Length'] = '0'
-        
+       
         resp.set_cookie('proxy_session_id', proxy_session_random, max_age=3600, httponly=True, secure=True if 'https' in request.host_url else False, samesite='None')
-        
+       
         return resp
-    
+   
     except Exception as e:
         return f'Error: {str(e)}', 500
-
-proxy_sessions = {}  # Global dict for sessions
-
+proxy_sessions = {} # Global dict for sessions
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=False, host='0.0.0.0', port=port, threaded=True)
