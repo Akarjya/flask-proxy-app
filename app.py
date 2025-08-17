@@ -242,10 +242,9 @@ def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_sess
     if soup.html:
         soup.html['lang'] = 'en-US'
    
-    # Add nonce to all existing inline scripts
+    # Add nonce to all script tags (inline and src)
     for script in soup.find_all('script'):
-        if not script.get('src') and script.string:  # inline with content
-            script['nonce'] = nonce
+        script['nonce'] = nonce
    
     # Inject scripts with nonce
     if soup.head:
@@ -268,6 +267,9 @@ def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_sess
 @app.route('/', methods=['GET'])
 def home():
     return "Proxy app is live. Go to /proxy to access the site."
+@app.route('/favicon.ico', methods=['GET'])
+def favicon():
+    return '', 204  # No content for favicon to avoid 404
 @app.route('/proxy', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
 def proxy():  # Removed cache to avoid nonce issues
     if request.method == 'OPTIONS':
@@ -342,8 +344,8 @@ def proxy():  # Removed cache to avoid nonce issues
         if 'text/html' in content_type:
             rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxy_session_random, proxy_session, headers, nonce)
             resp = make_response(rewritten_content, response.status_code)
-            # Set CSP with nonce for scripts
-            resp.headers['Content-Security-Policy'] = f"script-src 'nonce-{nonce}' 'unsafe-eval' 'strict-dynamic' https: http:; connect-src *; img-src * data: blob:; frame-src https: http:; object-src 'none'; base-uri 'none';"
+            # Set CSP with nonce for scripts, added unsafe-inline for AdSense compatibility
+            resp.headers['Content-Security-Policy'] = f"script-src 'nonce-{nonce}' 'unsafe-inline' 'unsafe-eval' 'strict-dynamic' https: http:; connect-src *; img-src * data: blob:; frame-src https: http:; object-src 'none'; base-uri 'none';"
         else:
             resp = make_response(response.content, response.status_code)
        
