@@ -6,7 +6,6 @@ import random
 import string
 import time
 import os
-import base64
 from datetime import timedelta
 from flask_compress import Compress
 from flask_caching import Cache
@@ -194,7 +193,7 @@ def fetch_asset(url, proxy_session, headers):
         return None, None
     except:
         return None, None
-def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_session, headers, nonce):
+def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_session, headers):
     soup = BeautifulSoup(content, 'lxml')
    
     # Remove meta refresh and CSP meta
@@ -242,24 +241,17 @@ def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_sess
     if soup.html:
         soup.html['lang'] = 'en-US'
    
-    # Add nonce to all script tags (inline and src)
-    for script in soup.find_all('script'):
-        script['nonce'] = nonce
-   
-    # Inject scripts with nonce
+    # Inject scripts (no nonce)
     if soup.head:
         session_script = soup.new_tag('script')
-        session_script['nonce'] = nonce
         session_script.string = f"const PROXY_SESSION_ID = '{proxy_session_random}';"
         soup.head.insert(0, session_script)
        
         timezone_script = soup.new_tag('script')
-        timezone_script['nonce'] = nonce
         timezone_script.string = TIMEZONE_SPOOF_JS
         soup.head.insert(1, timezone_script)
        
         proxy_script = soup.new_tag('script')
-        proxy_script['nonce'] = nonce
         proxy_script.string = PROXY_JS_OVERRIDE
         soup.head.insert(2, proxy_script)
    
@@ -271,7 +263,7 @@ def home():
 def favicon():
     return '', 204  # No content for favicon to avoid 404
 @app.route('/proxy', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
-def proxy():  # Removed cache to avoid nonce issues
+def proxy():  # Removed cache to avoid issues
     if request.method == 'OPTIONS':
         resp = make_response('')
         resp.headers['Access-Control-Allow-Origin'] = '*'
@@ -340,12 +332,11 @@ def proxy():  # Removed cache to avoid nonce issues
             return resp
        
         content_type = response.headers.get('Content-Type', '')
-        nonce = base64.urlsafe_b64encode(os.urandom(16)).decode('utf-8').rstrip('=')
         if 'text/html' in content_type:
-            rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxy_session_random, proxy_session, headers, nonce)
+            rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxy_session_random, proxy_session, headers)
             resp = make_response(rewritten_content, response.status_code)
-            # Set CSP with nonce for scripts, added unsafe-inline for AdSense compatibility
-            resp.headers['Content-Security-Policy'] = f"script-src 'nonce-{nonce}' 'unsafe-inline' 'unsafe-eval' 'strict-dynamic' https: http:; connect-src *; img-src * data: blob:; frame-src https: http:; object-src 'none'; base-uri 'none';"
+            # CSP without nonce, allow unsafe-inline for all inline scripts
+            resp.headers['Content-Security-Policy'] = "script-src 'unsafe-inline' 'unsafe-eval' 'strict-dynamic' https: http:; connect-src *; img-src * data: blob:; frame-src https: http:; object-src 'none'; base-uri 'none';"
         else:
             resp = make_response(response.content, response.status_code)
        
