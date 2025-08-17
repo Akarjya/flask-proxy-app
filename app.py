@@ -10,11 +10,6 @@ from datetime import timedelta
 from flask_compress import Compress
 from flask_caching import Cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import warnings
-from urllib3.exceptions import InsecureRequestWarning
-
-# Suppress InsecureRequestWarning
-warnings.simplefilter('ignore', InsecureRequestWarning)
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_testing'
@@ -125,29 +120,6 @@ PROXY_JS_OVERRIDE = """
         return ['en-US', 'en'];
       }
     });
-    // Spoof location.href for Adsense
-    const originalLocation = window.location;
-    window.location = new Proxy(originalLocation, {
-      get: function(target, prop) {
-        if (prop === 'href' || prop === 'origin') {
-          return 'https://ybsq.xyz' + target.pathname + target.search + target.hash;
-        }
-        return target[prop];
-      },
-      set: function(target, prop, value) {
-        if (prop === 'href') {
-          value = proxyBase + encodeURIComponent(value);
-        }
-        target[prop] = value;
-        return true;
-      }
-    });
-    // Adsense specific targeting mask
-    if (window.googletag && googletag.pubads) {
-      googletag.pubads().setTargeting('url', 'https://ybsq.xyz' + window.location.pathname);
-    } else if (window.adsbygoogle) {
-      // For Adsense, push with params if possible, but mainly rely on location spoof
-    }
     document.addEventListener('DOMContentLoaded', function() {
       const metas = document.querySelectorAll('meta[http-equiv="refresh"]');
       metas.forEach(meta => meta.remove());
@@ -281,7 +253,6 @@ def proxy():
         'Accept': request.headers.get('Accept'),
         'Accept-Language': SPOOFED_LANGUAGE,
         'Referer': request.headers.get('Referer'),
-        'Origin': 'https://ybsq.xyz'  # Add Origin spoof for server requests
     }
     
     try:
