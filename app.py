@@ -56,11 +56,11 @@ TIMEZONE_SPOOF_JS = """
 PROXY_JS_OVERRIDE = """
   console.log('Proxy JS override loaded');
   (function() {
-    const proxyBase = window.location.origin + '/proxy?url=';
+    const proxyBase = window.location.origin + '/proxy?session_id=' + PROXY_SESSION_ID + '&url=';
     const originalFetch = window.fetch;
     window.fetch = function(url, options) {
       console.log('Intercepted fetch to:', url);
-      if (typeof url === 'string' && !url.startsWith(proxyBase)) {  // Avoid double-proxy if already proxied
+      if (typeof url === 'string' && !url.startsWith(proxyBase)) {
         url = proxyBase + encodeURIComponent(url);
       } else if (url instanceof Request && !url.url.startsWith(proxyBase)) {
         url = new Request(proxyBase + encodeURIComponent(url.url), url);
@@ -88,14 +88,14 @@ PROXY_JS_OVERRIDE = """
       if (!url.startsWith(proxyBase)) {
         url = proxyBase + encodeURIComponent(url);
       }
-      return this.href = url;  // Use native set
+      return this.href = url;
     };
     window.location.assign = function(url) {
       console.log('Intercepted location.assign to:', url);
       if (!url.startsWith(proxyBase)) {
         url = proxyBase + encodeURIComponent(url);
       }
-      return this.href = url;  // Use native set
+      return this.href = url;
     };
     window.location.reload = function() {
       console.log('Reload blocked by proxy');
@@ -108,18 +108,16 @@ PROXY_JS_OVERRIDE = """
   })();
 """
 
-SESSION_TIMEOUT = 50
+SESSION_TIMEOUT = 300  # Increased to 5 min for better usability
 
-def rewrite_html(content, base_url, proxy_path):
+def rewrite_html(content, base_url, proxy_path, proxy_session_random):
     soup = BeautifulSoup(content, 'lxml')
     
     # Remove meta refresh tags to prevent auto-redirect
     for meta in soup.find_all('meta', attrs={'http-equiv': 'refresh'}):
         meta.decompose()
     
-    # NO base tag - to avoid relative URL confusion
-    
-    # Rewrite all possible links
+    # Rewrite all possible links with session_id
     attrs_list = ['href', 'src', 'action', 'poster', 'data-src', 'data-lazy-src', 'data-url']
     tags_list = ['a', 'img', 'script', 'link', 'form', 'iframe', 'video', 'source', 'audio', 'embed']
     for tag in soup.find_all(lambda tag: tag.name in tags_list and any(tag.has_attr(attr) for attr in attrs_list)):
@@ -128,19 +126,21 @@ def rewrite_html(content, base_url, proxy_path):
                 original_url = tag[attr]
                 if original_url:
                     full_url = urljoin(base_url, original_url)
-                    tag[attr] = f'{proxy_path}?url={quote_plus(full_url)}'
+                    tag[attr] = f'{proxy_path}?session_id={proxy_session_random}&url={quote_plus(full_url)}'
     
-    # Removed specific IP script replacement - let JS override handle it
-    
-    # Inject timezone and proxy JS override using new_tag
+    # Inject session_id const, timezone, and proxy JS override
     if soup.head:
+        session_script = soup.new_tag('script')
+        session_script.string = f"const PROXY_SESSION_ID = '{proxy_session_random}';"
+        soup.head.insert(0, session_script)
+        
         timezone_script = soup.new_tag('script')
         timezone_script.string = TIMEZONE_SPOOF_JS
-        soup.head.insert(0, timezone_script)
+        soup.head.insert(1, timezone_script)
         
         proxy_script = soup.new_tag('script')
         proxy_script.string = PROXY_JS_OVERRIDE
-        soup.head.insert(1, proxy_script)
+        soup.head.insert(2, proxy_script)
     
     return str(soup)
 
@@ -161,12 +161,13 @@ def proxy():
     if 'last_activity' in session:
         if time.time() - session['last_activity'] > SESSION_TIMEOUT:
             session.clear()
-            return 'Session expired due to inactivity. Please start again.', 403
     
     session['last_activity'] = time.time()
     
-    # Explicit cookie for sticky IP
-    proxy_session_random = request.cookies.get('proxy_session_id')
+    # Get session_id from query first, then cookie, then generate new
+    proxy_session_random = request.args.get('session_id')
+    if not proxy_session_random:
+        proxy_session_random = request.cookies.get('proxy_session_id')
     if not proxy_session_random:
         proxy_session_random = generate_random_session()
     
@@ -202,7 +203,7 @@ def proxy():
         
         if 300 <= response.status_code < 400 and 'location' in response.headers:
             location = urljoin(target_url, response.headers['location'])
-            redirected_url = f'{proxy_path}?url={quote_plus(location)}'
+            redirected_url = f'{proxy_path}?session_id={proxy_session_random}&url={quote_plus(location)}'
             resp = make_response('', response.status_code)
             resp.headers['Location'] = redirected_url
             for header, value in response.headers.items():
@@ -214,7 +215,7 @@ def proxy():
         
         content_type = response.headers.get('Content-Type', '')
         if 'text/html' in content_type:
-            rewritten_content = rewrite_html(response.text, target_url, proxy_path)
+            rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxy_session_random)
             resp = make_response(rewritten_content, response.status_code)
         else:
             resp = make_response(response.content, response.status_code)
