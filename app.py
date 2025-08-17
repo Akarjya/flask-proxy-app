@@ -181,8 +181,8 @@ def proxy():
     
     username = f'{BASE_USERNAME}{proxy_session_random}{USERNAME_SUFFIX}'
     proxies = {
-        'http': f'socks5://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}',
-        'https': f'socks5://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}'
+        'http': f'socks5h://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}',  # Changed to socks5h for remote DNS/SSL fix
+        'https': f'socks5h://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}'
     }
     
     headers = {
@@ -194,9 +194,9 @@ def proxy():
     
     try:
         if request.method in ('GET', 'HEAD'):
-            response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=60, allow_redirects=False)  # Increased timeout
+            response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=60, allow_redirects=False, verify=False)  # Added verify=False
         elif request.method == 'POST':
-            response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=60, allow_redirects=False)
+            response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=60, allow_redirects=False, verify=False)  # Added verify=False
         else:
             return 'Unsupported method', 405
         
