@@ -6,6 +6,8 @@ import random
 import string
 import time
 import os
+import hashlib
+import base64
 from datetime import timedelta
 from flask_compress import Compress
 from flask_caching import Cache
@@ -193,6 +195,12 @@ def fetch_asset(url, proxy_session, headers):
         return None, None
     except:
         return None, None
+def compute_script_hash(script_content):
+    if script_content:
+        hash_object = hashlib.sha256(script_content.encode('utf-8'))
+        hash_base64 = base64.b64encode(hash_object.digest()).decode('utf-8').rstrip('=')
+        return f"'sha256-{hash_base64}'"
+    return None
 def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_session, headers):
     soup = BeautifulSoup(content, 'lxml')
    
@@ -241,21 +249,39 @@ def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_sess
     if soup.html:
         soup.html['lang'] = 'en-US'
    
-    # Inject scripts (no nonce)
+    # Collect hashes for all inline scripts (original + injected)
+    script_hashes = []
+    for script in soup.find_all('script'):
+        if not script.get('src') and script.string:
+            hash_str = compute_script_hash(script.string)
+            if hash_str:
+                script_hashes.append(hash_str)
+   
+    # Inject scripts and compute their hashes
     if soup.head:
         session_script = soup.new_tag('script')
         session_script.string = f"const PROXY_SESSION_ID = '{proxy_session_random}';"
         soup.head.insert(0, session_script)
+        hash_str = compute_script_hash(session_script.string)
+        if hash_str:
+            script_hashes.append(hash_str)
        
         timezone_script = soup.new_tag('script')
         timezone_script.string = TIMEZONE_SPOOF_JS
         soup.head.insert(1, timezone_script)
+        hash_str = compute_script_hash(timezone_script.string)
+        if hash_str:
+            script_hashes.append(hash_str)
        
         proxy_script = soup.new_tag('script')
         proxy_script.string = PROXY_JS_OVERRIDE
         soup.head.insert(2, proxy_script)
+        hash_str = compute_script_hash(proxy_script.string)
+        if hash_str:
+            script_hashes.append(hash_str)
    
-    return str(soup)
+    # Return HTML and hashes
+    return str(soup), script_hashes
 @app.route('/', methods=['GET'])
 def home():
     return "Proxy app is live. Go to /proxy to access the site."
@@ -333,10 +359,11 @@ def proxy():  # Removed cache to avoid issues
        
         content_type = response.headers.get('Content-Type', '')
         if 'text/html' in content_type:
-            rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxy_session_random, proxy_session, headers)
+            rewritten_content, script_hashes = rewrite_html(response.text, target_url, proxy_path, proxy_session_random, proxy_session, headers)
             resp = make_response(rewritten_content, response.status_code)
-            # CSP without nonce, allow unsafe-inline for all inline scripts
-            resp.headers['Content-Security-Policy'] = "script-src 'unsafe-inline' 'unsafe-eval' 'strict-dynamic' https: http:; connect-src *; img-src * data: blob:; frame-src https: http:; object-src 'none'; base-uri 'none';"
+            hashes_str = ' '.join(script_hashes)
+            # CSP with hashes for inline, strict-dynamic for dynamic, no unsafe-inline
+            resp.headers['Content-Security-Policy'] = f"script-src {hashes_str} 'unsafe-eval' 'strict-dynamic' https: http:; connect-src *; img-src * data: blob:; frame-src https: http:; child-src https: http:; object-src 'none'; base-uri 'none';"
         else:
             resp = make_response(response.content, response.status_code)
        
