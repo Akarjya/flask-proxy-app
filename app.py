@@ -6,6 +6,7 @@ import random
 import string
 import time
 import os
+import base64
 from datetime import timedelta
 from flask_compress import Compress
 from flask_caching import Cache
@@ -82,14 +83,17 @@ PROXY_JS_OVERRIDE = """
   console.log('Proxy JS override loaded');
   (function() {
     const proxyBase = window.location.origin + '/proxy?session_id=' + PROXY_SESSION_ID + '&url=';
+    const spoofedLang = 'en-US,en;q=0.9';
     const originalFetch = window.fetch;
-    window.fetch = function(url, options) {
+    window.fetch = function(url, options = {}) {
       console.log('Intercepted fetch to:', url);
       if (typeof url === 'string' && !url.startsWith(proxyBase)) {
         url = proxyBase + encodeURIComponent(url);
       } else if (url instanceof Request && !url.url.startsWith(proxyBase)) {
         url = new Request(proxyBase + encodeURIComponent(url.url), url);
       }
+      if (!options.headers) options.headers = {};
+      options.headers['Accept-Language'] = spoofedLang;
       return originalFetch.call(this, url, options);
     };
     const originalXHR = XMLHttpRequest.prototype.open;
@@ -98,6 +102,11 @@ PROXY_JS_OVERRIDE = """
       if (!url.startsWith(proxyBase)) {
         url = proxyBase + encodeURIComponent(url);
       }
+      const originalSetHeader = this.setRequestHeader;
+      this.setRequestHeader = function(name, value) {
+        if (name === 'Accept-Language') value = spoofedLang;
+        return originalSetHeader.call(this, name, value);
+      };
       return originalXHR.call(this, method, url);
     };
     const originalSendBeacon = navigator.sendBeacon;
@@ -185,11 +194,11 @@ def fetch_asset(url, proxy_session, headers):
         return None, None
     except:
         return None, None
-def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_session, headers):
+def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_session, headers, nonce):
     soup = BeautifulSoup(content, 'lxml')
    
-    # Remove meta refresh
-    for meta in soup.find_all('meta', attrs={'http-equiv': 'refresh'}):
+    # Remove meta refresh and CSP meta
+    for meta in soup.find_all('meta', attrs={'http-equiv': lambda x: x and x.lower() in ['refresh', 'content-security-policy']}):
         meta.decompose()
    
     # Collect small assets for inlining
@@ -233,17 +242,25 @@ def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_sess
     if soup.html:
         soup.html['lang'] = 'en-US'
    
-    # Inject scripts
+    # Add nonce to all existing inline scripts
+    for script in soup.find_all('script'):
+        if not script.get('src') and script.string:  # inline with content
+            script['nonce'] = nonce
+   
+    # Inject scripts with nonce
     if soup.head:
         session_script = soup.new_tag('script')
+        session_script['nonce'] = nonce
         session_script.string = f"const PROXY_SESSION_ID = '{proxy_session_random}';"
         soup.head.insert(0, session_script)
        
         timezone_script = soup.new_tag('script')
+        timezone_script['nonce'] = nonce
         timezone_script.string = TIMEZONE_SPOOF_JS
         soup.head.insert(1, timezone_script)
        
         proxy_script = soup.new_tag('script')
+        proxy_script['nonce'] = nonce
         proxy_script.string = PROXY_JS_OVERRIDE
         soup.head.insert(2, proxy_script)
    
@@ -252,8 +269,7 @@ def rewrite_html(content, base_url, proxy_path, proxy_session_random, proxy_sess
 def home():
     return "Proxy app is live. Go to /proxy to access the site."
 @app.route('/proxy', methods=['GET', 'POST', 'HEAD', 'OPTIONS'])
-@cache.cached(timeout=30, query_string=True)
-def proxy():
+def proxy():  # Removed cache to avoid nonce issues
     if request.method == 'OPTIONS':
         resp = make_response('')
         resp.headers['Access-Control-Allow-Origin'] = '*'
@@ -322,9 +338,12 @@ def proxy():
             return resp
        
         content_type = response.headers.get('Content-Type', '')
+        nonce = base64.urlsafe_b64encode(os.urandom(16)).decode('utf-8').rstrip('=')
         if 'text/html' in content_type:
-            rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxy_session_random, proxy_session, headers)
+            rewritten_content = rewrite_html(response.text, target_url, proxy_path, proxy_session_random, proxy_session, headers, nonce)
             resp = make_response(rewritten_content, response.status_code)
+            # Set CSP with nonce for scripts
+            resp.headers['Content-Security-Policy'] = f"script-src 'nonce-{nonce}' 'unsafe-eval' 'strict-dynamic' https: http:; connect-src *; img-src * data: blob:; frame-src https: http:; object-src 'none'; base-uri 'none';"
         else:
             resp = make_response(response.content, response.status_code)
        
