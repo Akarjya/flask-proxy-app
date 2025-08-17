@@ -43,6 +43,9 @@ TIMEZONE_SPOOF_JS = """
       dtf.resolvedOptions = function() {
         const options = originalResolvedOptions.call(dtf);
         options.timeZone = '%s';
+        options.locale = 'en-US';
+        options.calendar = 'gregory';
+        options.numberingSystem = 'latn';
         return options;
       };
       return dtf;
@@ -109,6 +112,12 @@ PROXY_JS_OVERRIDE = """
     Object.defineProperty(navigator, 'languages', {
       get: function() {
         return ['en-US', 'en'];
+      }
+    });
+    // Also spoof userLanguage if checked
+    Object.defineProperty(navigator, 'userLanguage', {
+      get: function() {
+        return 'en-US';
       }
     });
     // Intercept dynamic script and iframe src
