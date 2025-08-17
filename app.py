@@ -1,4 +1,4 @@
-from flask import Flask, request, Response, session, make_response
+from flask import Flask, request, Response, session, make_response, redirect, url_for
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote_plus
@@ -108,7 +108,7 @@ PROXY_JS_OVERRIDE = """
   })();
 """
 
-SESSION_TIMEOUT = 300  # Increased to 5 min for better usability
+SESSION_TIMEOUT = 300
 
 def rewrite_html(content, base_url, proxy_path, proxy_session_random):
     soup = BeautifulSoup(content, 'lxml')
@@ -171,17 +171,19 @@ def proxy():
     if not proxy_session_random:
         proxy_session_random = generate_random_session()
     
+    target_url = request.args.get('url')
+    is_initial = not target_url
+    
+    # For initial access without session_id, redirect with new session_id and FINAL_URL
+    if is_initial and not request.args.get('session_id'):
+        redirect_url = f'/proxy?session_id={proxy_session_random}&url={quote_plus(FINAL_URL)}'
+        return redirect(redirect_url, code=302)
+    
     username = f'{BASE_USERNAME}{proxy_session_random}{USERNAME_SUFFIX}'
     proxies = {
         'http': f'socks5://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}',
         'https': f'socks5://{username}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}'
     }
-    
-    target_url = request.args.get('url')
-    is_initial = False
-    if not target_url:
-        target_url = FINAL_URL
-        is_initial = True
     
     headers = {
         'User-Agent': request.headers.get('User-Agent', 'Unknown'),
@@ -191,10 +193,10 @@ def proxy():
     }
     
     try:
-        if is_initial or request.method in ('GET', 'HEAD'):
-            response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=30, allow_redirects=False)
+        if request.method in ('GET', 'HEAD'):
+            response = requests.get(target_url, headers=headers, cookies=request.cookies, proxies=proxies, timeout=60, allow_redirects=False)  # Increased timeout
         elif request.method == 'POST':
-            response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=30, allow_redirects=False)
+            response = requests.post(target_url, headers=headers, cookies=request.cookies, data=request.get_data(), proxies=proxies, timeout=60, allow_redirects=False)
         else:
             return 'Unsupported method', 405
         
