@@ -40,9 +40,6 @@ PROXY_PASSWORD = 'pMBwu34BjjGr5urD'
 def generate_random_session():
     return ''.join(random.choices(string.digits, k=8))
 
-# Persistent session per proxy
-proxy_sessions = {}  # Dict to store requests.Session per session_id
-
 # Use % formatting, removed outer <script> tags
 TIMEZONE_SPOOF_JS = """
   (function() {
@@ -112,6 +109,17 @@ PROXY_JS_OVERRIDE = """
       console.log('Reload blocked by proxy');
       return;
     };
+    // Spoof navigator.language and languages
+    Object.defineProperty(navigator, 'language', {
+      get: function() {
+        return 'en-US';
+      }
+    });
+    Object.defineProperty(navigator, 'languages', {
+      get: function() {
+        return ['en-US', 'en'];
+      }
+    });
     document.addEventListener('DOMContentLoaded', function() {
       const metas = document.querySelectorAll('meta[http-equiv="refresh"]');
       metas.forEach(meta => meta.remove());
@@ -293,6 +301,8 @@ def proxy():
     
     except Exception as e:
         return f'Error: {str(e)}', 500
+
+proxy_sessions = {}  # Global dict for sessions
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
