@@ -53,6 +53,29 @@ TIMEZONE_SPOOF_JS = """
     Date.prototype.getTimezoneOffset = function() {
       return %d;
     };
+    // Additional Intl spoofs
+    const originalNumberFormat = Intl.NumberFormat;
+    Intl.NumberFormat = function(...args) {
+      const nf = new originalNumberFormat(...args);
+      const originalResolvedOptions = nf.resolvedOptions;
+      nf.resolvedOptions = function() {
+        const options = originalResolvedOptions.call(nf);
+        options.locale = 'en-US';
+        return options;
+      };
+      return nf;
+    };
+    const originalPluralRules = Intl.PluralRules;
+    Intl.PluralRules = function(...args) {
+      const pr = new originalPluralRules(...args);
+      const originalResolvedOptions = pr.resolvedOptions;
+      pr.resolvedOptions = function() {
+        const options = originalResolvedOptions.call(pr);
+        options.locale = 'en-US';
+        return options;
+      };
+      return pr;
+    };
   })();
 """ % (SPOOFED_TIMEZONE, SPOOFED_OFFSET)
 PROXY_JS_OVERRIDE = """
@@ -131,7 +154,7 @@ PROXY_JS_OVERRIDE = """
             return this.getAttribute('src');
           },
           set: function(value) {
-            if (value && !value.startsWith(proxyBase)) {
+            if (value && typeof value === 'string' && !value.startsWith(proxyBase)) {
               console.log('Intercepted ' + tagLower + ' src set:', value);
               value = proxyBase + encodeURIComponent(value);
             }
